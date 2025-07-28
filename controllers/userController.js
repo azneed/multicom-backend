@@ -145,6 +145,8 @@ const verifyOtp = async (req, res) => {
             expiresIn: '1h', // Token expires in 1 hour
         });
 
+        console.log('OTP Verification Success! User ID:', user._id, 'Token generated.'); // ADDED LOG
+
         res.status(200).json({
             message: 'OTP verified successfully',
             token,
@@ -174,13 +176,20 @@ const getUserById = async (req, res) => {
 
 // 🔹 Get logged-in user's profile (NEW FUNCTION for /api/users/profile)
 const getUserProfile = async (req, res) => {
+    console.log('getUserProfile: Function called.'); // ADDED LOG
+    console.log('getUserProfile: req.user object:', req.user ? 'Exists' : 'Does not exist', req.user); // ADDED LOG
+
     try {
         // req.user.userId is set by the protect middleware from the JWT payload (_id)
-        const user = await User.findById(req.user.userId).select('-otp -otpExpires'); // Exclude sensitive fields
+        // Correctly use req.user._id which is populated by authMiddleware
+        const user = await User.findById(req.user._id).select('-otp -otpExpires'); // Assuming req.user is the full Mongoose object
 
         if (!user) {
+            console.error('getUserProfile: User profile not found in DB for ID:', req.user._id); // ADDED LOG
             return res.status(404).json({ message: 'User profile not found.' });
         }
+
+        console.log('getUserProfile: User profile found:', user.name); // ADDED LOG
 
         res.json({
             _id: user._id,
@@ -194,7 +203,7 @@ const getUserProfile = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error fetching user profile:', error.message);
+        console.error('Error fetching user profile:', error.message); // ADDED LOG
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -202,8 +211,8 @@ const getUserProfile = async (req, res) => {
 
 module.exports = {
     registerUser,
-    generateOtp, // ✅ Add this
-    verifyOtp,   // ✅ Add this
+    generateOtp,
+    verifyOtp,
     getUserById,
-    getUserProfile // ✅ Add this
+    getUserProfile
 };
