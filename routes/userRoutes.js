@@ -1,17 +1,16 @@
-// userRoutes.js
-
 const express = require('express');
 const router = express.Router();
+const User = require('../models/User'); // ADD THIS LINE TO IMPORT USER MODEL
 const {
   registerUser,
   getUserById,
   generateOtp,
   verifyOtp,
-  getUserProfile // Make sure getUserProfile is imported
+  getUserProfile
 } = require('../controllers/userController');
-const { protect } = require('../middleware/authMiddleware'); // Make sure protect is imported
+const { protect, admin } = require('../middleware/authMiddleware'); // IMPORT ADMIN MIDDLEWARE HERE
 
-// 🔹 POST /api/users — Add new user
+// 🔹 POST /api/users — Add new user (This is typically for public registration)
 router.post('/', registerUser);
 
 // ✅ NEW ROUTE: Generate OTP
@@ -20,16 +19,14 @@ router.post('/generate-otp', generateOtp);
 // ✅ NEW ROUTE: Verify OTP and Login
 router.post('/verify-otp', verifyOtp);
 
-// ✅ CRITICAL FIX: Place the /profile route BEFORE the /:id route
-// This ensures that when '/api/users/profile' is requested, it matches this specific route
-// and calls getUserProfile, instead of the general /:id route.
-// 🔹 GET /api/users/profile — Get logged-in user's profile
+// 🔹 GET /api/users/profile — Get logged-in user's profile (protected for the user themselves)
 router.get('/profile', protect, getUserProfile);
 
-// 🔹 GET /api/users — Get all users (This route is fine where it is)
-router.get('/', async (req, res) => {
+// 🔹 GET /api/users — Get all users (This route should be protected and admin-only)
+// This is the route that AdminDashboard's UsersList component calls
+router.get('/', protect, admin, async (req, res) => { // ADD protect AND admin MIDDLEWARE
   try {
-    const users = await User.find();
+    const users = await User.find({}); // Use User.find({}) to get all users
     res.status(200).json(users);
   } catch (err) {
     console.error('Error fetching users:', err.message);
@@ -37,8 +34,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// 🔹 GET /api/users/:id — Get user by ID (This must come AFTER /profile)
-router.get('/:id', getUserById);
-
+// 🔹 GET /api/users/:id — Get user by ID (This must come AFTER /profile, also protected and admin-only)
+router.get('/:id', protect, admin, getUserById); // ADD protect AND admin MIDDLEWARE
 
 module.exports = router;

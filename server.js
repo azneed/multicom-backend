@@ -11,6 +11,7 @@ const schemeRoutes = require('./routes/schemeRoutes');
 const pendingPaymentRoutes = require('./routes/pendingPaymentRoutes');
 const activityRoutes = require('./routes/activityLogRoutes');
 const authRoutes = require('./routes/auth');
+const adminRoutes = require('./routes/adminRoutes'); // <--- ADD THIS LINE
 const { protect } = require('./middleware/authMiddleware');
 const app = express();
 
@@ -35,10 +36,11 @@ mongoose.connection.once('open', () => {
     // --- Define Routes ---
     // Unprotected Auth Routes
     app.use('/api/auth', authRoutes); // Authentication routes (login, register, OTP) are generally public
+    app.use('/api/admin', adminRoutes); // <--- ADD THIS LINE FOR ADMIN ROUTES
 
     // Protected Routes - apply 'protect' middleware to secure these endpoints
     // These routes will now use Mongoose models directly
-    app.use('/api/users', userRoutes);  // <---- REMOVE 'protect' here.  It's handled within userRoutes
+    app.use('/api/users', userRoutes);
 
     app.use('/api/payments', protect, paymentRoutes);
     app.use('/api/reminders', protect, reminderRoutes);
