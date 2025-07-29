@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User'); // ADD THIS LINE TO IMPORT USER MODEL
+const User = require('../models/User');
 const {
   registerUser,
   getUserById,
@@ -31,12 +31,25 @@ router.put('/profile', protect, updateUserProfile);
 // This is the route that AdminDashboard's UsersList component calls
 router.get('/', protect, admin, async (req, res) => {
   try {
-    // ✅ MODIFIED: Add .sort({ cardNumber: 1 }) to sort by cardNumber ascending
     const users = await User.find({}).sort({ cardNumber: 1 });
     res.status(200).json(users);
   } catch (err) {
     console.error('Error fetching users:', err.message);
     res.status(500).json({ message: 'Error fetching users' });
+  }
+});
+
+// ✅ NEW ROUTE: Get user by card number (protected and admin-only)
+router.get('/by-card/:cardNumber', protect, admin, async (req, res) => {
+  try {
+    const user = await User.findOne({ cardNumber: parseInt(req.params.cardNumber, 10) }); // Ensure base 10 parsing
+    if (!user) {
+      return res.status(404).json({ message: 'User not found for this card number.' });
+    }
+    res.json(user);
+  } catch (err) {
+    console.error('Error fetching user by card number:', err.message);
+    res.status(500).json({ message: 'Server error fetching user by card number' });
   }
 });
 
