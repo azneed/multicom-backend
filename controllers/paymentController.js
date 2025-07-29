@@ -1,9 +1,9 @@
 const Payment = require('../models/Payment');
-const User = require('../models/User');
-const ActivityLog = require('../models/ActivityLog'); // Mongoose MODEL
+const User = require('../models/User'); // Already exists in your file
+const ActivityLog = require('../models/ActivityLog'); // Already exists in your file
 const PendingPayment = require('../models/PendingPayment');
 
-// 🔹 User uploads payment proof (creates PendingPayment)
+// 🔹 User uploads payment proof (creates PendingPayment) - UNMODIFIED
 const addPaymentProof = async (req, res) => {
   try {
     const { userId, amount, mode, week } = req.body;
@@ -43,7 +43,7 @@ const addPaymentProof = async (req, res) => {
   }
 };
 
-// 🟢 Admin adds a payment manually or approves a pending one
+// 🟢 Admin adds a payment manually or approves a pending one - UNMODIFIED
 const addManualOrApprovedPayment = async (req, res) => {
   try {
     // 'week' is now the 'startWeek' for multi-week payments
@@ -111,7 +111,7 @@ const addManualOrApprovedPayment = async (req, res) => {
 };
 
 
-// 🔹 Get all users who paid in a specific week
+// 🔹 Get all users who paid in a specific week - UNMODIFIED
 const getWeekPayments = async (req, res) => {
   try {
     const week = parseInt(req.params.weekNumber);
@@ -123,7 +123,7 @@ const getWeekPayments = async (req, res) => {
   }
 };
 
-// 🔹 Get users who didn’t pay in a specific week
+// 🔹 Get users who didn’t pay in a specific week - UNMODIFIED
 const getWeekDefaulters = async (req, res) => {
   try {
     const week = parseInt(req.params.weekNumber);
@@ -138,7 +138,7 @@ const getWeekDefaulters = async (req, res) => {
   }
 };
 
-// 🔹 Get full payment history of a user
+// 🔹 Get full payment history of a user - UNMODIFIED
 const getUserPayments = async (req, res) => {
   try {
     // Explicitly select screenshotPath and populate user details
@@ -154,7 +154,7 @@ const getUserPayments = async (req, res) => {
   }
 };
 
-// 🔴 Delete a payment by ID (admin only)
+// 🔴 Delete a payment by ID (admin only) - UNMODIFIED
 const deletePayment = async (req, res) => {
   try {
     const payment = await Payment.findByIdAndDelete(req.params.id);
@@ -181,11 +181,45 @@ const deletePayment = async (req, res) => {
   }
 };
 
+// ✅ NEW FUNCTION: Get the N most recent payments
+const getRecentPayments = async (req, res) => {
+  try {
+    // Ensure limit is a positive integer, default to 5
+    const limit = parseInt(req.params.limit, 10);
+    if (isNaN(limit) || limit <= 0) {
+      return res.status(400).json({ message: 'Limit must be a positive number.' });
+    }
+
+    // Fetch recent payments, sort by creation date descending
+    const recentPayments = await Payment.find({})
+      .sort({ createdAt: -1 }) // Sort by newest first
+      .limit(limit)
+      .lean(); // Use .lean() for faster query if you don't need Mongoose document methods
+
+    // For each payment, get the associated user's name and card number
+    const paymentsWithUserDetails = await Promise.all(recentPayments.map(async (payment) => {
+      const user = await User.findById(payment.userId).select('name cardNumber').lean(); // Fetch only name and cardNumber from userId
+      return {
+        ...payment,
+        userName: user ? user.name : 'Unknown User',
+        userCardNumber: user ? user.cardNumber : 'N/A'
+      };
+    }));
+
+    res.json(paymentsWithUserDetails);
+  } catch (error) {
+    console.error('Error fetching recent payments:', error.message);
+    res.status(500).json({ message: 'Server error fetching recent payments' });
+  }
+};
+
+
 module.exports = {
   addPaymentProof,
   addManualOrApprovedPayment,
   getWeekPayments,
   getWeekDefaulters,
   getUserPayments,
-  deletePayment
+  deletePayment,
+  getRecentPayments, // ✅ EXPORT THE NEW FUNCTION
 };
