@@ -55,7 +55,7 @@ const admin = (req, res, next) => {
   if (req.admin && (req.admin.role === 'admin' || req.admin.role === 'superadmin')) {
     next(); // Authorized as admin
   } else {
-    res.status(403).json({ message: 'Not authorized as an admin' }); // Forbidden
+    res.status(403).json({ message: 'Not authorized as an admin' });
   }
 };
 
