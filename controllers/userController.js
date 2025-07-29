@@ -2,7 +2,7 @@ const User = require('../models/User');
 const ActivityLog = require('../models/ActivityLog');
 const jwt = require('jsonwebtoken'); // Import jsonwebtoken here
 const https = require('https'); // Import the https module
-const { parsePhoneNumberFromString } = require('libphonenumber-js');
+const { parsePhoneNumberFromString } = require('libphonenumber-js'); // Corrected import
 
 // 🔹 Register a new participant
 const registerUser = async (req, res) => {
@@ -145,7 +145,7 @@ const verifyOtp = async (req, res) => {
             expiresIn: '1h', // Token expires in 1 hour
         });
 
-        console.log('OTP Verification Success! User ID:', user._id, 'Token generated.'); // ADDED LOG
+        console.log('OTP Verification Success! User ID:', user._id, 'Token generated.');
 
         res.status(200).json({
             message: 'OTP verified successfully',
@@ -174,22 +174,20 @@ const getUserById = async (req, res) => {
     }
 };
 
-// 🔹 Get logged-in user's profile (NEW FUNCTION for /api/users/profile)
+// 🔹 Get logged-in user's profile (for /api/users/profile)
 const getUserProfile = async (req, res) => {
-    console.log('getUserProfile: Function called.'); // ADDED LOG
-    console.log('getUserProfile: req.user object:', req.user ? 'Exists' : 'Does not exist', req.user); // ADDED LOG
+    console.log('getUserProfile: Function called.');
+    console.log('getUserProfile: req.user object:', req.user ? 'Exists' : 'Does not exist', req.user);
 
     try {
-        // req.user.userId is set by the protect middleware from the JWT payload (_id)
-        // Correctly use req.user._id which is populated by authMiddleware
-        const user = await User.findById(req.user._id).select('-otp -otpExpires'); // Assuming req.user is the full Mongoose object
+        const user = await User.findById(req.user._id).select('-otp -otpExpires');
 
         if (!user) {
-            console.error('getUserProfile: User profile not found in DB for ID:', req.user._id); // ADDED LOG
+            console.error('getUserProfile: User profile not found in DB for ID:', req.user._id);
             return res.status(404).json({ message: 'User profile not found.' });
         }
 
-        console.log('getUserProfile: User profile found:', user.name); // ADDED LOG
+        console.log('getUserProfile: User profile found:', user.name);
 
         res.json({
             _id: user._id,
@@ -199,11 +197,124 @@ const getUserProfile = async (req, res) => {
             place: user.place,
             schemeId: user.schemeId,
             registeredAt: user.registeredAt,
-            // Include any other fields from your User model that you want in the profile
         });
 
     } catch (error) {
-        console.error('Error fetching user profile:', error.message); // ADDED LOG
+        console.error('Error fetching user profile:', error.message);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// 🔹 NEW FUNCTION: Update logged-in user's own profile (non-sensitive fields)
+const updateUserProfile = async (req, res) => {
+    // req.user is populated by 'protect' middleware
+    try {
+        const user = await User.findById(req.user._id);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        // Only allow update of specific fields
+        const { name, phone, place } = req.body;
+
+        // Check for duplicate phone number if changed
+        if (phone && phone !== user.phone) {
+            const existingPhoneUser = await User.findOne({ phone });
+            if (existingPhoneUser && existingPhoneUser._id.toString() !== user._id.toString()) {
+                return res.status(400).json({ message: 'Phone number already registered to another user.' });
+            }
+            user.phone = phone;
+        }
+
+        user.name = name || user.name; // Update name if provided, otherwise keep current
+        user.place = place || user.place; // Update place if provided, otherwise keep current
+        // IMPORTANT: Do NOT allow updating cardNumber or _id here.
+
+        await user.save();
+
+        res.json({
+            message: 'Profile updated successfully',
+            user: {
+                _id: user._id,
+                cardNumber: user.cardNumber,
+                name: user.name,
+                phone: user.phone,
+                place: user.place,
+            }
+        });
+
+    } catch (error) {
+        console.error('Error updating user profile:', error.message);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+// 🔹 NEW FUNCTION: Update any user's profile by Admin (all fields)
+const updateUserByAdmin = async (req, res) => {
+    // req.admin is populated by 'protect' and 'admin' middleware
+    try {
+        const userIdToUpdate = req.params.id; // User ID from URL parameter
+        const updates = req.body; // All fields from request body
+
+        const user = await User.findById(userIdToUpdate);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        // Handle cardNumber update specifically
+        if (updates.cardNumber && updates.cardNumber !== user.cardNumber) {
+            const parsedCardNumber = parseInt(updates.cardNumber, 10);
+            if (isNaN(parsedCardNumber)) {
+                return res.status(400).json({ message: 'Card number must be a valid number.' });
+            }
+            const existingUserWithCard = await User.findOne({ cardNumber: parsedCardNumber });
+            if (existingUserWithCard && existingUserWithCard._id.toString() !== user._id.toString()) {
+                return res.status(400).json({ message: 'Card number already registered to another user.' });
+            }
+            user.cardNumber = parsedCardNumber;
+        }
+
+        // Handle phone number update specifically
+        if (updates.phone && updates.phone !== user.phone) {
+            const existingUserWithPhone = await User.findOne({ phone: updates.phone });
+            if (existingUserWithPhone && existingUserWithPhone._id.toString() !== user._id.toString()) {
+                return res.status(400).json({ message: 'Phone number already registered to another user.' });
+            }
+            user.phone = updates.phone;
+        }
+
+        // Update other allowed fields
+        user.name = updates.name || user.name;
+        user.place = updates.place || user.place;
+        // Add other fields here if they can be updated by admin
+        if (updates.schemeId) user.schemeId = updates.schemeId; // Example: Admin can change schemeId
+
+        await user.save();
+
+        // Log the activity
+        await ActivityLog.create({
+            actionType: 'user_update_by_admin',
+            adminId: req.admin._id, // Log which admin made the change
+            userId: user._id, // Log which user was updated
+            note: `Admin ${req.admin.username} updated user ${user.name} (${user.cardNumber})`
+        });
+
+        res.json({
+            message: 'User updated successfully by admin',
+            user: {
+                _id: user._id,
+                cardNumber: user.cardNumber,
+                name: user.name,
+                phone: user.phone,
+                place: user.place,
+                schemeId: user.schemeId,
+            }
+        });
+
+    } catch (error) {
+        console.error('Error updating user by admin:', error.message);
         res.status(500).json({ message: 'Server error' });
     }
 };
@@ -214,5 +325,7 @@ module.exports = {
     generateOtp,
     verifyOtp,
     getUserById,
-    getUserProfile
+    getUserProfile,
+    updateUserProfile, // ✅ ADDED
+    updateUserByAdmin  // ✅ ADDED
 };

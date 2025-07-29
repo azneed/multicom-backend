@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken'); // Assuming you use JWT for admin sessions
 // Helper to generate JWT token
 const generateAdminToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, { // Use your JWT_SECRET from .env
-    expiresIn: '1h', // Token valid for 1 hour
+    expiresIn: '7d', // ✅ FIX: Token valid for 7 days (or '30d' for 30 days)
   });
 };
 
