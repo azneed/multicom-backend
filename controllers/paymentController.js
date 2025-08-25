@@ -1,24 +1,33 @@
 const Payment = require('../models/Payment');
-const User = require('../models/User'); // Already exists in your file
-const ActivityLog = require('../models/ActivityLog'); // Already exists in your file
+const User = require('../models/User');
+const ActivityLog = require('../models/ActivityLog');
 const PendingPayment = require('../models/PendingPayment');
 
-// 🔹 User uploads payment proof (creates PendingPayment) - UNMODIFIED
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+
+const s3 = new S3Client({
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+  region: process.env.AWS_REGION
+});
+
 const addPaymentProof = async (req, res) => {
   try {
     const { userId, amount, mode, week } = req.body;
     if (!userId || !amount || !mode) {
       return res.status(400).json({ message: 'Missing required fields: userId, amount, and mode.' });
     }
-    if (!req.file || !req.file.path) {
+    if (!req.file || !req.file.location) {
       return res.status(400).json({ message: 'Payment screenshot is required for this transaction.' });
     }
     const pendingPayment = new PendingPayment({
       userId,
-      amount: parseInt(amount), // Ensure amount is parsed
+      amount: parseInt(amount),
       mode,
-      screenshotUrl: req.file.path,
-      week: parseInt(week) // Ensure week is parsed and saved for pending
+      screenshotUrl: req.file.location,
+      week: parseInt(week)
     });
     await pendingPayment.save();
     try {
@@ -28,7 +37,7 @@ const addPaymentProof = async (req, res) => {
         amount: parseInt(amount),
         mode,
         note: `User uploaded payment for review. Amount: ${amount}, Mode: ${mode}`,
-        screenshotUrl: req.file.path
+        screenshotUrl: req.file.location
       });
     } catch (logErr) {
       console.warn('⚠️ Activity logging failed for pending payment:', logErr.message);
@@ -43,21 +52,17 @@ const addPaymentProof = async (req, res) => {
   }
 };
 
-// 🟢 Admin adds a payment manually or approves a pending one - UNMODIFIED
 const addManualOrApprovedPayment = async (req, res) => {
   try {
-    // 'week' is now the 'startWeek' for multi-week payments
-    const { userId, amount, mode, week: startWeek, screenshotPath, pendingPaymentId } = req.body; 
+    const { userId, amount, mode, week: startWeek, screenshotUrl, pendingPaymentId } = req.body;
 
     if (!userId || !amount || !mode || !startWeek) {
       return res.status(400).json({ message: 'Missing required fields: userId, amount, mode, and startWeek.' });
     }
 
     const parsedAmount = parseInt(amount);
-    // Calculate number of weeks based on the amount
-    const numWeeks = parsedAmount / 100; 
+    const numWeeks = parsedAmount / 100;
 
-    // Basic validation for amount
     if (parsedAmount % 100 !== 0 || numWeeks < 1) {
         return res.status(400).json({ message: 'Amount must be a multiple of 100 and at least 100.' });
     }
@@ -65,40 +70,37 @@ const addManualOrApprovedPayment = async (req, res) => {
     const createdPayments = [];
     let currentWeek = parseInt(startWeek);
 
-    // ⭐ KEY FIX: Create multiple payment records if amount > 100
     for (let i = 0; i < numWeeks; i++) {
         const payment = new Payment({
             userId,
-            amount: 100, // Each individual record is for 100
+            amount: 100,
             mode,
-            week: currentWeek, // Assign the current week in the sequence
-            screenshotPath: screenshotPath // Same screenshot for all weeks in this bulk payment
+            week: currentWeek,
+            screenshotUrl: screenshotUrl
         });
         await payment.save();
         createdPayments.push(payment);
-        currentWeek++; // Move to the next week for the next payment
+        currentWeek++;
     }
 
     try {
       await ActivityLog.create({
-        actionType: pendingPaymentId ? 'approve' : 'manual', // 'approve' if called from pending, 'manual' otherwise
+        actionType: pendingPaymentId ? 'approve' : 'manual',
         userId,
-        amount: parsedAmount, // Log the total original amount paid
+        amount: parsedAmount,
         mode,
-        week: parseInt(startWeek), // Log the starting week of the payment
+        week: parseInt(startWeek),
         note: pendingPaymentId ? `Approved payment for ${numWeeks} week(s) starting from week ${startWeek}.` : `Admin manually added payment for ${numWeeks} week(s) starting from week ${startWeek}.`,
-        screenshotUrl: screenshotPath
+        screenshotUrl: screenshotUrl
       });
     } catch (logErr) {
       console.warn('⚠️ Activity logging failed for payment approval/manual add:', logErr.message);
     }
 
-    // If it's an approval originating from pending, return the result
     if (pendingPaymentId) {
       return { message: `Payment successfully added/approved for ${numWeeks} week(s).`, payments: createdPayments };
     }
 
-    // If it's a direct manual add, send the response here.
     res.status(201).json({
       message: `Payment successfully added for ${numWeeks} week(s).`,
       payments: createdPayments
@@ -111,11 +113,10 @@ const addManualOrApprovedPayment = async (req, res) => {
 };
 
 
-// 🔹 Get all users who paid in a specific week - UNMODIFIED
 const getWeekPayments = async (req, res) => {
   try {
     const week = parseInt(req.params.weekNumber);
-    const payments = await Payment.find({ week }).populate('userId', 'cardNumber name phone place').select('+screenshotPath');
+    const payments = await Payment.find({ week }).populate('userId', 'cardNumber name phone place').select('screenshotUrl');
     res.json(payments);
   } catch (err) {
     console.error('Error fetching week payments:', err.message);
@@ -123,7 +124,6 @@ const getWeekPayments = async (req, res) => {
   }
 };
 
-// 🔹 Get users who didn’t pay in a specific week - UNMODIFIED
 const getWeekDefaulters = async (req, res) => {
   try {
     const week = parseInt(req.params.weekNumber);
@@ -138,14 +138,22 @@ const getWeekDefaulters = async (req, res) => {
   }
 };
 
-// 🔹 Get full payment history of a user - UNMODIFIED
+// ... (rest of the file)
+
+// 🔹 Get full payment history of a user
 const getUserPayments = async (req, res) => {
   try {
-    // Explicitly select screenshotPath and populate user details
-    const payments = await Payment.find({ userId: req.params.userId })
+    const requestedUserId = req.params.userId;
+
+    if (req.user && req.user._id.toString() !== requestedUserId) {
+        return res.status(403).json({ message: 'Not authorized to view other users\' payments.' });
+    }
+
+    // ✅ FIX: Explicitly select 'createdAt' field here.
+    const payments = await Payment.find({ userId: requestedUserId })
                                  .sort({ week: 1 })
-                                 .populate('userId', 'name cardNumber phone place') 
-                                 .select('+screenshotPath'); 
+                                 .populate('userId', 'name cardNumber phone place')
+                                 .select('week amount mode screenshotUrl createdAt'); // Ensure 'createdAt' is selected
 
     res.json(payments);
   } catch (err) {
@@ -154,13 +162,24 @@ const getUserPayments = async (req, res) => {
   }
 };
 
-// 🔴 Delete a payment by ID (admin only) - UNMODIFIED
+// ... (rest of the file)
 const deletePayment = async (req, res) => {
   try {
     const payment = await Payment.findByIdAndDelete(req.params.id);
     if (!payment) {
       return res.status(404).json({ message: 'Payment not found' });
     }
+
+    if (payment.screenshotUrl && payment.screenshotUrl.startsWith(`https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/`)) {
+        const key = payment.screenshotUrl.split(`https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/`)[1];
+        const params = {
+            Bucket: process.env.AWS_BUCKET_NAME,
+            Key: key
+        };
+        await s3.send(new DeleteObjectCommand(params));
+        console.log('Successfully deleted object from S3.');
+    }
+
     try {
       await ActivityLog.create({
         actionType: 'delete',
@@ -169,11 +188,12 @@ const deletePayment = async (req, res) => {
         week: payment.week,
         mode: payment.mode,
         note: `Deleted week ${payment.week} payment`,
-        screenshotUrl: payment.screenshotPath
+        screenshotUrl: payment.screenshotUrl
       });
     } catch (logErr) {
       console.warn('⚠️ Logging delete failed:', logErr.message);
     }
+
     res.json({ message: '🗑️ Payment deleted successfully', payment });
   } catch (err) {
     console.error('Error deleting payment:', err.message);
@@ -181,30 +201,33 @@ const deletePayment = async (req, res) => {
   }
 };
 
-// ✅ NEW FUNCTION: Get the N most recent payments
 const getRecentPayments = async (req, res) => {
   try {
-    // Ensure limit is a positive integer, default to 5
     const limit = parseInt(req.params.limit, 10);
     if (isNaN(limit) || limit <= 0) {
       return res.status(400).json({ message: 'Limit must be a positive number.' });
     }
-
-    // Fetch recent payments, sort by creation date descending
+    // ✅ FIX: Populate userId directly here to get user details in the result.
+    // Remove .lean() initially so populate works, then use .map() to make it lean if needed.
     const recentPayments = await Payment.find({})
-      .sort({ createdAt: -1 }) // Sort by newest first
+      .sort({ createdAt: -1 })
       .limit(limit)
-      .lean(); // Use .lean() for faster query if you don't need Mongoose document methods
+      .populate('userId', 'name cardNumber') // Populate name and cardNumber
+      .select('amount mode week createdAt screenshotUrl'); // Explicitly select required payment fields
 
-    // For each payment, get the associated user's name and card number
-    const paymentsWithUserDetails = await Promise.all(recentPayments.map(async (payment) => {
-      const user = await User.findById(payment.userId).select('name cardNumber').lean(); // Fetch only name and cardNumber from userId
+    // Now, map to ensure we get a plain object and proper user details
+    const paymentsWithUserDetails = recentPayments.map(payment => {
+      // payment.userId will now be the populated user object, or null if user not found
+      const userName = payment.userId ? payment.userId.name : 'Unknown User';
+      const userCardNumber = payment.userId ? payment.userId.cardNumber : 'N/A';
+
+      // Convert Mongoose document to plain object, then add custom fields
       return {
-        ...payment,
-        userName: user ? user.name : 'Unknown User',
-        userCardNumber: user ? user.cardNumber : 'N/A'
+        ...payment.toObject(), // Convert to plain object
+        userName,
+        userCardNumber
       };
-    }));
+    });
 
     res.json(paymentsWithUserDetails);
   } catch (error) {
@@ -213,7 +236,6 @@ const getRecentPayments = async (req, res) => {
   }
 };
 
-
 module.exports = {
   addPaymentProof,
   addManualOrApprovedPayment,
@@ -221,5 +243,5 @@ module.exports = {
   getWeekDefaulters,
   getUserPayments,
   deletePayment,
-  getRecentPayments, // ✅ EXPORT THE NEW FUNCTION
+  getRecentPayments,
 };

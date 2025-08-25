@@ -6,25 +6,23 @@ const {
   getWeekDefaulters,
   getUserPayments,
   deletePayment,
-  getRecentPayments // ✅ NEW IMPORT
+  getRecentPayments
 } = require('../controllers/paymentController');
-const { protect, admin } = require('../middleware/authMiddleware'); // ✅ Ensure protect and admin are imported
-
+const { protect, admin } = require('../middleware/authMiddleware');
 
 // 🟢 Admin Payment Actions
-// This route now directly adds payments (manual admin adds or multi-week manager adds)
-router.post('/', protect, admin, addManualOrApprovedPayment); // ✅ Added protect, admin
-router.delete('/:id', protect, admin, deletePayment); // ✅ Added protect, admin
+// These routes should remain protected by 'admin' middleware
+router.post('/', protect, admin, addManualOrApprovedPayment);
+router.delete('/:id', protect, admin, deletePayment);
 
-// ✅ NEW ROUTE: Get the N most recent payments (admin only)
+// ✅ Admin-only week-based queries (remain protected by 'admin')
 router.get('/recent/:limit', protect, admin, getRecentPayments);
-
-// 📅 Week-based Queries
-router.get('/week/:weekNumber', protect, admin, getWeekPayments); // ✅ Added protect, admin
-router.get('/week/:weekNumber/defaulters', protect, admin, getWeekDefaulters); // ✅ Added protect, admin
+router.get('/week/:weekNumber', protect, admin, getWeekPayments);
+router.get('/week/:weekNumber/defaulters', protect, admin, getWeekDefaulters);
 
 // 👤 Get a user's full payment history
-router.get('/user/:userId', protect, admin, getUserPayments); // ✅ Added protect, admin
-
+// ✅ CRITICAL FIX: Removed 'admin' middleware here.
+// The controller will now handle authorization for regular users.
+router.get('/user/:userId', protect, getUserPayments);
 
 module.exports = router;

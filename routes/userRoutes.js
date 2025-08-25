@@ -1,22 +1,30 @@
+// multicom-backend/routes/userRoutes.js
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User');
+const User = require('../models/User'); // Mongoose User model
+
+// Assuming these other functions are in userController.js
 const {
   registerUser,
   getUserById,
-  generateOtp,
-  verifyOtp,
   getUserProfile,
   updateUserProfile,
   updateUserByAdmin
-} = require('../controllers/userController');
+} = require('../controllers/userController'); // Keep this if you have other userController functions
+
+// ✅ IMPORTANT FIX: Import requestOtp and verifyOtp from authController.js
+const {
+  requestOtp, // Renamed from generateOtp in authController
+  verifyOtp
+} = require('../controllers/authController'); // This is the actual source of the OTP functions
+
 const { protect, admin } = require('../middleware/authMiddleware');
 
 // 🔹 POST /api/users — Add new user (This is typically for public registration)
 router.post('/', registerUser);
 
-// ✅ NEW ROUTE: Generate OTP
-router.post('/generate-otp', generateOtp);
+// ✅ NEW ROUTE: Request OTP (mapped to requestOtp from authController)
+router.post('/generate-otp', requestOtp); // Frontend calls 'generate-otp', backend function is 'requestOtp'
 
 // ✅ NEW ROUTE: Verify OTP and Login
 router.post('/verify-otp', verifyOtp);
@@ -28,7 +36,6 @@ router.get('/profile', protect, getUserProfile);
 router.put('/profile', protect, updateUserProfile);
 
 // 🔹 GET /api/users — Get all users (This route should be protected and admin-only)
-// This is the route that AdminDashboard's UsersList component calls
 router.get('/', protect, admin, async (req, res) => {
   try {
     const users = await User.find({}).sort({ cardNumber: 1 });
@@ -42,7 +49,7 @@ router.get('/', protect, admin, async (req, res) => {
 // ✅ NEW ROUTE: Get user by card number (protected and admin-only)
 router.get('/by-card/:cardNumber', protect, admin, async (req, res) => {
   try {
-    const user = await User.findOne({ cardNumber: parseInt(req.params.cardNumber, 10) }); // Ensure base 10 parsing
+    const user = await User.findOne({ cardNumber: parseInt(req.params.cardNumber, 10) });
     if (!user) {
       return res.status(404).json({ message: 'User not found for this card number.' });
     }

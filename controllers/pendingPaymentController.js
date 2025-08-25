@@ -1,17 +1,28 @@
 const PendingPayment = require('../models/PendingPayment');
-const Payment = require('../models/Payment'); // Needed for nextWeek calculation
-const User = require('../models/User'); // Not directly used in this controller now
-const ActivityLog = require('../models/ActivityLog'); // Mongoose MODEL
-const fs = require('fs');
-const path = require('path');
+const Payment = require('../models/Payment');
+const User = require('../models/User'); // Not directly used in this controller's logic, but fine to keep.
+const ActivityLog = require('../models/ActivityLog');
+const PaymentController = require('./paymentController');
 
-const PaymentController = require('./paymentController'); // Import paymentController
+// ✅ UPDATED: Import S3Client from AWS SDK v3
+const { S3Client, DeleteObjectCommand } = require('@aws-sdk/client-s3'); // Added DeleteObjectCommand
+// ✅ REMOVED: const aws = require('aws-sdk'); // No longer needed for S3 operations
+// ✅ REMOVED: aws.config.update... // Config will be passed directly to S3Client
 
-// 🔹 User uploads payment proof
+// ✅ UPDATED: Configure S3Client with explicit credentials and region for v3
+const s3 = new S3Client({
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+  region: process.env.AWS_REGION
+});
+
+// 🔹 User uploads payment proof (this is called by pendingPaymentRoutes via Multer)
 const uploadProof = async (req, res) => {
   try {
     const { userId, amount, mode, week } = req.body;
-    const screenshotUrl = req.file?.filename || req.file?.path;
+    const screenshotUrl = req.file?.location;
 
     if (!userId || !amount || !screenshotUrl || !week) {
       return res.status(400).json({ message: 'Missing fields: userId, amount, week, and screenshot.' });
@@ -50,7 +61,9 @@ const uploadProof = async (req, res) => {
 // 🔹 Get all pending payments for admin review
 const getAllPendingPayments = async (req, res) => {
   try {
-    const pending = await PendingPayment.find().populate('userId', 'name cardNumber phone');
+    // ✅ FIX: Remove .select('screenshotUrl') to include all fields,
+    // or specify all fields you need: 'amount mode week userId screenshotUrl'
+    const pending = await PendingPayment.find().populate('userId', 'name cardNumber phone'); // Removed .select('screenshotUrl')
     res.json(pending);
   } catch (err) {
     res.status(500).json({ message: 'Error loading pending payments' });
@@ -65,7 +78,6 @@ const approvePendingPayment = async (req, res) => {
 
     if (!pending) return res.status(404).json({ message: 'Pending payment not found' });
 
-    // Calculate the next available week based on existing payments for this user
     const paidWeeks = await Payment.find({ userId: pending.userId }).select('week').lean();
     const paidNumbers = paidWeeks.map(p => p.week);
     let nextWeek = null;
@@ -80,24 +92,28 @@ const approvePendingPayment = async (req, res) => {
     }
 
     // Call addManualOrApprovedPayment and get its returned value.
-    const result = await PaymentController.addManualOrApprovedPayment( 
+    // Ensure `addManualOrApprovedPayment` returns a promise if it's async
+    // and its 'res' parameter (which is null here) is handled gracefully by that function.
+    const result = await PaymentController.addManualOrApprovedPayment(
         { body: { // Simulate req.body
             userId: pending.userId,
-            amount: parseInt(pending.amount), // Pass the original total amount
+            amount: parseInt(pending.amount),
             mode: pending.mode,
-            week: nextWeek, // Pass the calculated starting week
-            screenshotPath: pending.screenshotUrl, 
-            pendingPaymentId: pending._id 
+            week: nextWeek,
+            screenshotUrl: pending.screenshotUrl,
+            pendingPaymentId: pending._id
         }},
-        null // Pass null for res, as we don't want addManualOrApprovedPayment to send response
+        // Passing null for `res` here means addManualOrApprovedPayment must
+        // NOT attempt to send an HTTP response if it's called from here.
+        // It should just return the data. Your current addManualOrApprovedPayment
+        // already handles this with an `if (pendingPaymentId) return { ... }` block.
+        null
     );
 
-    // Delete the pending payment after successful creation of actual Payment.
     await PendingPayment.findByIdAndDelete(id);
     console.log(`Pending payment ${id} deleted after approval.`);
 
-    // Send the final success response from this controller.
-    res.status(200).json({ message: result.message, payments: result.payments }); 
+    res.status(200).json({ message: result.message, payments: result.payments });
 
   } catch (err) {
     console.error('Approval error in pendingPaymentController:', err);
@@ -125,14 +141,16 @@ const rejectPendingPayment = async (req, res) => {
       console.warn('⚠️ Activity logging failed for rejection:', logErr.message);
     }
 
-    if (pending.screenshotUrl) {
-      const filename = path.basename(pending.screenshotUrl);
-      const filePath = path.join(__dirname, '..', 'uploads', filename);
-      fs.unlink(filePath, err => {
-        if (err) {
-          console.error('Error deleting image file:', err.message);
-        }
-      });
+    // ✅ UPDATED: Use S3Client (v3) and DeleteObjectCommand
+    if (pending.screenshotUrl && pending.screenshotUrl.startsWith(`https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/`)) {
+      const key = pending.screenshotUrl.split(`https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/`)[1];
+      const params = {
+          Bucket: process.env.AWS_BUCKET_NAME, // Changed to AWS_BUCKET_NAME for consistency
+          Key: key
+      };
+      // ✅ Use s3.send with DeleteObjectCommand for AWS SDK v3
+      await s3.send(new DeleteObjectCommand(params));
+      console.log('Successfully deleted object from S3.');
     }
 
     await PendingPayment.findByIdAndDelete(id);

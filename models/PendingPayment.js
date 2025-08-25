@@ -12,23 +12,24 @@ const pendingPaymentSchema = new mongoose.Schema({
   },
   mode: {
     type: String,
-    enum: ['online', 'offline', 'UPI'], // Ensure UPI is supported if you have QR code
+    enum: ['online', 'offline', 'UPI'],
     required: true
   },
   screenshotUrl: {
     type: String,
     required: true
   },
-  // --- NEW: Add the week field ---
-  week: { // Add this field so it's available when approving
+  week: {
     type: Number,
-    required: false, // Make it optional at pending stage if not always provided by user
+    required: true, // This is fine for new data, consider old data if issues arise
   },
-  // --- END NEW ---
-  createdAt: {
-    type: Date,
-    default: Date.now
-  }
+  status: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+  },
+}, {
+  timestamps: true // Adds createdAt and updatedAt
 });
 
 module.exports = mongoose.model('PendingPayment', pendingPaymentSchema);
